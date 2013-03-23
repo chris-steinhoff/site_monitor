@@ -1,0 +1,7 @@
+{
+	"Subject": "site-monitor: Page Changed",
+	"From": "email@example.com",
+	"To": [ "one@example.com", "two@example.com" ],
+	"BodyTmpl": [ "body.tmpl" ]
+}
+
