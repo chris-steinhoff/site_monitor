@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -133,6 +135,63 @@ func TestReadJsonFile(t *testing.T) {
 	err = os.Remove(f.Name())
 	if err != nil {
 		t.Error(err)
+	}
+}
+
+func TestViewstateFilter(t *testing.T) {
+	const (
+		contentsText = `<html>
+<body>
+<input id="test" type="text" value="testing"/>
+<input id="__VIEWSTATE" type="hidden" value="this should be deleted"/>
+<input id="__EVENTVALIDATION" type="hidden" value="this should be deleted"/>
+</body>
+</html>
+`
+		expectedText = `<html>
+<body>
+<input id="test" type="text" value="testing"/>
+<input id="__VIEWSTATE" type="hidden" value=""/>
+<input id="__EVENTVALIDATION" type="hidden" value=""/>
+</body>
+</html>
+`
+	)
+
+	var (
+		filter Filter
+		contents *strings.Reader
+		expected []byte
+		result *bytes.Buffer
+		n int64
+		err error
+	)
+
+	contents = strings.NewReader(contentsText)
+	expected = []byte(expectedText)
+	result = bytes.NewBuffer(make([]byte, 0, len(contentsText)))
+
+	filter, err = NewViewstateFilter(result)
+	if err != nil {
+		t.Log("Failed to create a new ViewstateFilter")
+		t.FailNow()
+	}
+
+	n, err = filter.ReadFrom(contents)
+	if err != nil {
+		t.Log("Failed to read from contents and write to result")
+		t.FailNow()
+	}
+
+	if n != int64(result.Len()) {
+		t.Logf("Sizes don't match: written=%d ; len=%d", n, result.Len())
+		t.Fail()
+	}
+
+	if bytes.Compare(result.Bytes(), expected) != 0 {
+		t.Logf("Result didn't match what was expected:\n--result\n%s\n--expected\n%s",
+				result.String(), expectedText)
+		t.Fail()
 	}
 }
 

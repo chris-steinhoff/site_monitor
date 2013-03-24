@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/md5"
 	"flag"
@@ -104,7 +105,7 @@ func main() {
 	log.Println("Current hash:", currHash)
 
 	// Download the page we're monitoring
-	err = Download(file, url)
+	err = download(file, url)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -205,9 +206,10 @@ func GetFile(filename string) (*os.File, []byte, error) {
 	return file, currHash, nil
 }
 
-func Download(f *os.File, url string) error {
+func download(f *os.File, url string) error {
 	var (
 		resp *http.Response
+		filter Filter
 		written int64
 		err error
 	)
@@ -224,8 +226,14 @@ func Download(f *os.File, url string) error {
 		return err
 	}
 
+	// Filter out the VIEWSTATE
+	filter, err = NewViewstateFilter(f)
+	if err != nil {
+		return err
+	}
+
 	// Write the response body to the file
-	written, err = io.Copy(f, resp.Body)
+	written, err = io.Copy(filter, resp.Body)
 	resp.Body.Close()
 	if err != nil {
 		return err
@@ -236,6 +244,55 @@ func Download(f *os.File, url string) error {
 	err = f.Truncate(written)
 
 	return err
+}
+
+type Filter interface {
+	io.Writer
+	io.ReaderFrom
+}
+
+type ViewstateFilter struct {
+	w io.Writer
+	viewRe, eventRe, replaceRe *regexp.Regexp
+	repl []byte
+}
+
+func NewViewstateFilter(w io.Writer) (vf *ViewstateFilter, err error) {
+	vf = new(ViewstateFilter)
+	vf.w = w
+	vf.viewRe, err = regexp.Compile(`id="__VIEWSTATE"`)
+	if err == nil {
+		vf.eventRe, err = regexp.Compile(`id="__EVENTVALIDATION"`)
+		if err == nil {
+			vf.replaceRe, err = regexp.Compile(`value="[^"]+"`)
+		}
+	}
+	vf.repl = []byte{ 'v', 'a', 'l', 'u', 'e', '=', '"', '"' }
+	return
+}
+
+func (vf *ViewstateFilter) ReadFrom(r io.Reader) (n int64, err error) {
+	bf := bufio.NewReader(r)
+	var line, found []byte
+	var c int
+	for line, err = bf.ReadBytes('\n') ; err == nil ; line, err = bf.ReadBytes('\n') {
+		if found = vf.viewRe.Find(line) ; found != nil {
+			c, err = vf.w.Write(vf.replaceRe.ReplaceAllLiteral(line, vf.repl))
+		} else if found = vf.eventRe.Find(line) ; found != nil {
+			c, err = vf.w.Write(vf.replaceRe.ReplaceAllLiteral(line, vf.repl))
+		} else {
+			c, err = vf.w.Write(line)
+		}
+		n += int64(c)
+	}
+	if err != io.EOF { return; }
+	err = nil
+	return
+}
+
+func (vf *ViewstateFilter) Write(p []byte) (n int, err error) {
+	n, err = vf.w.Write(p)
+	return
 }
 
 func Hash(file *os.File) ([]byte, error) {
